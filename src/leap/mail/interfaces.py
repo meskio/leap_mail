@@ -20,7 +20,7 @@ Interfaces for the leap.mail module.
 from zope.interface import Interface, Attribute
 
 
-class IMessageWrapper(object):
+class IMessageWrapper(Interface):
     """
     I know how to access the different parts into which a given message is
     splitted into.
@@ -50,8 +50,9 @@ class IMailAdaptor(Interface):
         :rtype: deferred
         """
 
-    @classmethod
-    def msg_from_string(cls, MessageClass, raw_msg):
+    # TODO is staticmethod valid with an interface?
+    # @staticmethod
+    def get_msg_from_string(self, MessageClass, raw_msg):
         """
         Return IMessageWrapper implementor from a raw mail string
 
@@ -60,8 +61,9 @@ class IMailAdaptor(Interface):
         :rtype: implementor of leap.mail.IMessage
         """
 
-    @classmethod
-    def msg_from_docs(cls, MessageClass, msg_wrapper):
+    # TODO is staticmethod valid with an interface?
+    # @staticmethod
+    def get_msg_from_docs(self, MessageClass, msg_wrapper):
         """
         Return an IMessage implementor from its parts.
 

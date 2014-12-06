@@ -19,10 +19,10 @@ LeapMessage and MessageCollection.
 """
 import copy
 import logging
-import re
 import threading
 import StringIO
 
+from collections import defaultdict
 from functools import partial
 
 from twisted.mail import imap4
@@ -33,6 +33,8 @@ from zope.proxy import sameProxiedObjects
 from leap.common.check import leap_assert, leap_assert_type
 from leap.common.decorators import memoized_method
 from leap.common.mail import get_email_charset
+from leap.mail.adaptors import soledad_indexes as indexes
+from leap.mail.constants import INBOX_NAME
 from leap.mail.utils import find_charset, empty
 from leap.mail.imap.index import IndexedDB
 from leap.mail.imap.fields import fields, WithMsgFields
@@ -80,11 +82,8 @@ def try_unique_query(curried):
         logger.exception("Unhandled error %r" % exc)
 
 
-"""
-A dictionary that keeps one lock per mbox and uid.
-"""
-# XXX too much overhead?
-fdoc_locks = defaultdict(lambda: defaultdict(lambda: threading.Lock()))
+# FIXME remove-me
+#fdoc_locks = defaultdict(lambda: defaultdict(lambda: threading.Lock()))
 
 
 class IMAPMessage(fields, MBoxParser):
@@ -238,25 +237,24 @@ class IMAPMessage(fields, MBoxParser):
         REMOVE = -1
         SET = 0
 
-        with fdoc_locks[mbox][uid]:
-            doc = self.fdoc
-            if not doc:
-                logger.warning(
-                    "Could not find FDOC for %r:%s while setting flags!" %
-                    (mbox, uid))
-                return
-            current = doc.content[self.FLAGS_KEY]
-            if mode == APPEND:
-                newflags = tuple(set(tuple(current) + flags))
-            elif mode == REMOVE:
-                newflags = tuple(set(current).difference(set(flags)))
-            elif mode == SET:
-                newflags = flags
-            new_fdoc = {
-                self.FLAGS_KEY: newflags,
-                self.SEEN_KEY: self.SEEN_FLAG in newflags,
-                self.DEL_KEY: self.DELETED_FLAG in newflags}
-            self._collection.memstore.update_flags(mbox, uid, new_fdoc)
+        doc = self.fdoc
+        if not doc:
+            logger.warning(
+                "Could not find FDOC for %r:%s while setting flags!" %
+                (mbox, uid))
+            return
+        current = doc.content[self.FLAGS_KEY]
+        if mode == APPEND:
+            newflags = tuple(set(tuple(current) + flags))
+        elif mode == REMOVE:
+            newflags = tuple(set(current).difference(set(flags)))
+        elif mode == SET:
+            newflags = flags
+        new_fdoc = {
+            self.FLAGS_KEY: newflags,
+            self.SEEN_KEY: self.SEEN_FLAG in newflags,
+            self.DEL_KEY: self.DELETED_FLAG in newflags}
+        self._collection.memstore.update_flags(mbox, uid, new_fdoc)
 
         return map(str, newflags)
 
@@ -611,14 +609,14 @@ class MessageCollection(WithMsgFields, IndexedDB, MBoxParser):
         # Mailbox Level
 
         RECENT_DOC: {
-            fields.TYPE_KEY: fields.TYPE_RECENT_VAL,
-            fields.MBOX_KEY: fields.INBOX_VAL,
+            "type": indexes.TYPE_RECENT_VAL,
+            "mbox": INBOX_NAME,
             fields.RECENTFLAGS_KEY: [],
         },
 
         HDOCS_SET_DOC: {
-            fields.TYPE_KEY: fields.TYPE_HDOCS_SET_VAL,
-            fields.MBOX_KEY: fields.INBOX_VAL,
+            "type": indexes.TYPE_HDOCS_SET_VAL,
+            "mbox": INBOX_NAME,
             fields.HDOCS_SET_KEY: [],
         }
 
@@ -628,8 +626,7 @@ class MessageCollection(WithMsgFields, IndexedDB, MBoxParser):
     # Different locks for wrapping both the u1db document getting/setting
     # and the property getting/settting in an atomic operation.
 
-    # TODO we would abstract this to a SoledadProperty class
-
+    # TODO --- deprecate ! --- use SoledadDocumentWrapper + locks
     _rdoc_lock = defaultdict(lambda: threading.Lock())
     _rdoc_write_lock = defaultdict(lambda: threading.Lock())
     _rdoc_read_lock = defaultdict(lambda: threading.Lock())
@@ -1055,36 +1052,36 @@ class MessageCollection(WithMsgFields, IndexedDB, MBoxParser):
         return msg
 
     # FIXME --- used where ? ---------------------------------------------
-    def get_all_docs(self, _type=fields.TYPE_FLAGS_VAL):
-        """
-        Get all documents for the selected mailbox of the
-        passed type. By default, it returns the flag docs.
-
-        If you want acess to the content, use __iter__ instead
-
-        :return: a Deferred, that will fire with a list of u1db documents
-        :rtype: Deferred (promise of list of SoledadDocument)
-        """
-        if _type not in fields.__dict__.values():
-            raise TypeError("Wrong type passed to get_all_docs")
-
+    #def get_all_docs(self, _type=fields.TYPE_FLAGS_VAL):
+        #"""
+        #Get all documents for the selected mailbox of the
+        #passed type. By default, it returns the flag docs.
+#
+        #If you want acess to the content, use __iter__ instead
+#
+        #:return: a Deferred, that will fire with a list of u1db documents
+        #:rtype: Deferred (promise of list of SoledadDocument)
+        #"""
+        #if _type not in fields.__dict__.values():
+            #raise TypeError("Wrong type passed to get_all_docs")
+#
         # FIXME ----- either raise or return a deferred wrapper.
-        if sameProxiedObjects(self._soledad, None):
-            logger.warning('Tried to get messages but soledad is None!')
-            return []
-
-        def get_sorted_docs(docs):
-            all_docs = [doc for doc in docs]
+        #if sameProxiedObjects(self._soledad, None):
+            #logger.warning('Tried to get messages but soledad is None!')
+            #return []
+#
+        #def get_sorted_docs(docs):
+            #all_docs = [doc for doc in docs]
             # inneficient, but first let's grok it and then
             # let's worry about efficiency.
             # XXX FIXINDEX -- should implement order by in soledad
             # FIXME ----------------------------------------------
-            return sorted(all_docs, key=lambda item: item.content['uid'])
-
-        d = self._soledad.get_from_index(
-            fields.TYPE_MBOX_IDX, _type, self.mbox)
-        d.addCallback(get_sorted_docs)
-        return d
+            #return sorted(all_docs, key=lambda item: item.content['uid'])
+#
+        #d = self._soledad.get_from_index(
+            #fields.TYPE_MBOX_IDX, _type, self.mbox)
+        #d.addCallback(get_sorted_docs)
+        #return d
 
     def all_soledad_uid_iter(self):
         """

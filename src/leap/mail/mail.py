@@ -19,7 +19,7 @@ Generic Access to Mail objects: Public LEAP Mail API.
 """
 from twisted.internet import defer
 
-from leap.mail.imap.constants import INBOX_NAME
+from leap.mail.constants import INBOX_NAME
 from leap.mail.adaptors.soledad import SoledadMailAdaptor
 
 
@@ -195,7 +195,7 @@ class Account(object):
     # Public API Starts
     #
 
-    # XXX IMAP only???
+    # XXX params for IMAP only???
     def list_mailboxes(self, ref, wildcard):
         self.adaptor.get_all_mboxes(self.store)
 

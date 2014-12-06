@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# interfaces.py
+# soledad.py
 # Copyright (C) 2014 LEAP
 #
 # This program is free software: you can redistribute it and/or modify
@@ -28,8 +28,9 @@ from zope.interface import implements
 from leap.common.check import leap_assert, leap_assert_type
 
 from leap.mail import walk
+from leap.mail.adaptors import soledad_indexes as indexes
 from leap.mail.constants import INBOX_NAME
-from leap.mail.adaptors.soledad_indexes import MAIL_INDEXES
+from leap.mail.adaptors import models
 from leap.mail.imap.mailbox import normalize_mailbox
 from leap.mail.utils import lowerdict, first
 from leap.mail.utils import stringify_parts_map
@@ -38,10 +39,101 @@ from leap.mail.interfaces import IMailAdaptor, IMessageWrapper
 
 # TODO
 # [ ] Convenience function to create mail specifying subject, date, etc?
+# [ ] get_or_create_doc_wrapper(klass, index):
+#     should query by and index, create the document if it does not exist, and
+#     return the document wrapper.
 
 
 _MSGID_PATTERN = r"""<([\w@.]+)>"""
 _MSGID_RE = re.compile(_MSGID_PATTERN)
+
+
+class SoledadDocumentWrapper(models.DocumentWrapper):
+
+    # TODO we could also use a _dirty flag
+    # it could be add to models.
+    # Having a update_attrs_after_read would also allow
+    # to avoid RevisionConflicts if several objects are modifying the
+    # same document.
+
+    def __init__(self, **kwargs):
+        doc_id = kwargs.pop('doc_id', None)
+        self._doc_id = doc_id
+        self._lock = defer.DeferredLock()
+        super(SoledadDocumentWrapper, self).__init__(**kwargs)
+
+    def create(self, store):
+        def update_doc_id(doc):
+            self._doc_id = doc.doc_id
+            return doc
+        d = store.create_doc(self.serialize())
+        d.addCallback(update_doc_id)
+        return d
+
+    def update(self, store):
+        # the deferred lock guards against revision conflicts
+        return self._lock.run(self._update, store)
+
+    def _update(self, store):
+        leap_assert(self._doc_id is not None,
+                    "Need to create doc before update")
+
+        def update_and_put_doc(doc):
+            doc.content.update(self.serialize())
+            return store.put_doc(doc)
+
+        d = store.get_doc(self._doc_id)
+        d.addCallback(update_and_put_doc)
+        return d
+
+
+#
+# Message documents
+#
+
+
+class _FlagsDoc(models.SerializableModel):
+    """
+    Flags Document.
+    """
+    type_ = "flags"
+    chash = ""
+
+    mbox = "inbox"
+    seen = False
+    deleted = False
+    recent = False
+    multi = False
+    flags = []
+    tags = []
+    size = 0
+
+
+class _HeaderDoc(models.SerializableModel):
+    """
+    Headers Document.
+    """
+    type_ = "head"
+    chash = ""
+
+    date = ""
+    subject = ""
+    headers = {}
+    part_map = {}
+    body = ""  # link to phash of body
+    msgid = ""
+
+
+class _ContentDoc(models.SerializableModel):
+    """
+    Content Document.
+    """
+    type_ = "cnt"
+    phash = ""
+
+    ctype = ""  # XXX index by ctype too?
+    lkf = []  # XXX not implemented yet!
+    raw = ""
 
 
 class MessageWrapper(object):
@@ -58,90 +150,31 @@ class MessageWrapper(object):
             cdocs = {}
         self.cdocs = cdocs
 
-
-class MailboxWrapper(object):
-
-    def __init__(self, mbox_doc):
-        self.mbox_doc = mbox_doc
-        self.model = _MailboxDoc
+#
+# Mailboxes
+#
 
 
-class _DocumentModel(object):
-    """
-    A Generic document model, that can be serialized into a dictionary.
-    """
-
-    @classmethod
-    def get_dict(klass):
-        """
-        Get a dictionary representation of the public attributes in the model
-        class.
-        """
-        # XXX fix SUFFIX foo_ (type)
-        return dict(
-            [(k, v) for k, v in klass.__class__.__dict__.items()
-             if not k.startswith('_')])
-
-
-class _FlagsDoc(_DocumentModel):
-    """
-    Flags Document.
-    """
-    type_ = "flags"
-    chash = ""
-
-    mbox = "inbox"
-    seen = False
-    deleted = False
-    recent = False
-    multi = False
-    flags = []
-    tags = []
-    size = 0
-
-    # XXX deprecated
-    # uid = None
-
-
-class _HeaderDoc(_DocumentModel):
-    """
-    Headers Document.
-    """
-    type_ = "head"
-    chash = ""
-
-    date = ""
-    subject = ""
-    headers = {}
-    part_map = {}
-    body = ""  # link to phash of body
-    msgid = ""
-
-
-class _ContentDoc(_DocumentModel):
-    """
-    Content Document.
-    """
-    type_ = "cnt"
-    phash = ""
-
-    ctype = ""  # XXX index by ctype too?
-    lkf = []  # XXX not implemented yet!
-    raw = ""
-
-
-class _MailboxDoc(_DocumentModel):
+class _MailboxDoc(models.SerializableModel):
     """
     Mailbox Document.
     """
     type_ = "mbox"
     mbox = INBOX_NAME
-    subject = ""
     flags = []
     closed = False
     subscribed = False
     # XXX rw should be bool instead, and convert to int in imap
     rw = 1
+
+
+class MailboxWrapper(SoledadDocumentWrapper):
+    model = _MailboxDoc
+
+
+#
+# Soledad Adaptor
+#
 
 
 class SoledadMailAdaptor(object):
@@ -154,7 +187,7 @@ class SoledadMailAdaptor(object):
     u1db store underlying soledad. It needs to be in the following format:
     {'index-name': ['field1', 'field2']}
     """
-    indexes = MAIL_INDEXES
+    indexes = indexes.MAIL_INDEXES
     store_ready = False
 
     _index_creation_deferreds = []
@@ -208,18 +241,18 @@ class SoledadMailAdaptor(object):
         d.addCallback(_create_indexes)
         return d
 
-    @classmethod
-    def get_msg_from_string(cls, MessageClass, raw_msg):
+    #@staticmethod
+    def get_msg_from_string(MessageClass, raw_msg):
         """
         :rtype: MessageClass instance.
         """
         assert(MessageClass is not None)
         fdoc, hdoc, cdocs = _split_into_parts(raw_msg)
-        return cls.msg_from_docs(
+        return SoledadMailAdaptor.msg_from_docs(
             MessageClass, MessageWrapper(fdoc, hdoc, cdocs))
 
-    @classmethod
-    def get_msg_from_docs(cls, MessageClass, msg_wrapper):
+    #@staticmethod
+    def get_msg_from_docs(MessageClass, msg_wrapper):
         """
         :rtype: MessageClass instance.
         """
@@ -268,11 +301,13 @@ class SoledadMailAdaptor(object):
         return d
 
     def create_mbox_doc(self, store, mbox_wrapper):
-        # XXX avoid duplication?
-        d = store.create_doc(mbox_wrapper.to_dict())
+        # XXX avoid duplication somehow?
+        empty_mbox_doc = _build_mbox_doc()
+        d = store.create_doc(empty_mbox_doc)
         return d
 
     def update_mbox_doc(self, store, mbox_wrapper):
+        # XXX use a (deferred) lock to update the doc
         pass
 
 
@@ -314,7 +349,7 @@ def _build_flags_doc(chash, size, multi):
     _fdoc.chash = chash
     _fdoc.size = size
     _fdoc.multi = multi
-    return _fdoc.to_dict()
+    return _fdoc.serialize()
 
 
 def _build_headers_doc(msg, chash, parts_map):
@@ -349,9 +384,14 @@ def _build_headers_doc(msg, chash, parts_map):
     copy_attr(headers, "subject", _hdoc)
     copy_attr(headers, "date", _hdoc)
 
-    hdoc = _hdoc.to_dict()
+    hdoc = _hdoc.serialize()
     # add parts map to header doc
     # (body, multi, part_map)
     for key in parts_map:
         hdoc[key] = parts_map[key]
     return stringify_parts_map(hdoc)
+
+
+def _build_mbox_doc():
+    _mbox_doc = _MailboxDoc()
+    return _mbox_doc.serialize()

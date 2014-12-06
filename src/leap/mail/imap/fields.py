@@ -19,6 +19,7 @@ Fields for Mailbox and Message.
 """
 
 # TODO deprecate !!! (move all to constants maybe?)
+# Flags -> foo
 
 
 class WithMsgFields(object):
