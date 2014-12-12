@@ -26,6 +26,14 @@ class SerializableModel(object):
 
     Subclasses of this `SerializableModel` are meant to be added as class
     attributes of classes inheriting from DocumentWrapper.
+
+    A subclass __meta__ of this SerializableModel might exist, and contain info
+    relative to particularities of this model.
+
+    For instance, the use of `__meta__.index` marks the existence of a primary
+    index in the model, which will be used to do unique queries (in which case
+    all the other indexed fields in the underlying document will be filled with
+    the default info contained in the model definition).
     """
 
     @classmethod
@@ -76,7 +84,6 @@ class DocumentWrapper(object):
             setattr(self, k, v)
 
     def __setattr__(self, attr, value):
-
         normalized = _normalize_dict(self.model.__dict__)
         if not attr.startswith('_') and attr not in normalized:
             raise RuntimeError(

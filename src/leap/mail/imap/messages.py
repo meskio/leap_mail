@@ -609,13 +609,13 @@ class MessageCollection(WithMsgFields, IndexedDB, MBoxParser):
         # Mailbox Level
 
         RECENT_DOC: {
-            "type": indexes.TYPE_RECENT_VAL,
+            "type": indexes.RECENT,
             "mbox": INBOX_NAME,
             fields.RECENTFLAGS_KEY: [],
         },
 
         HDOCS_SET_DOC: {
-            "type": indexes.TYPE_HDOCS_SET_VAL,
+            "type": indexes.HDOCS_SET,
             "mbox": INBOX_NAME,
             fields.HDOCS_SET_KEY: [],
         }

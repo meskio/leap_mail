@@ -21,16 +21,23 @@ import os
 import shutil
 import tempfile
 
+from functools import partial
+
 from twisted.internet import defer
 from twisted.trial import unittest
 
 from leap.common.testing.basetest import BaseLeapTest
 from leap.mail.adaptors import models
 from leap.mail.adaptors.soledad import SoledadDocumentWrapper
+from leap.mail.adaptors.soledad import SoledadIndexMixin
 from leap.soledad.client import Soledad
 
 TEST_USER = "testuser@leap.se"
 TEST_PASSWD = "1234"
+
+# DEBUG
+# import logging
+# logging.basicConfig(level=logging.DEBUG)
 
 
 def initialize_soledad(email, gnupg_home, tempdir):
@@ -99,8 +106,9 @@ class SoledadTestMixin(BaseLeapTest):
         self.results = []
         try:
             self._soledad.close()
-        except Exception:
-            print "DEBUG ME: ERROR WHILE CLOSING SOLEDAD :("
+        except Exception as exc:
+            print "ERROR WHILE CLOSING SOLEDAD"
+            # logging.exception(exc)
         finally:
             os.environ["PATH"] = self.old_path
             os.environ["HOME"] = self.old_home
@@ -115,7 +123,66 @@ class CounterWrapper(SoledadDocumentWrapper):
         flag = None
 
 
+class CharacterWrapper(SoledadDocumentWrapper):
+    class model(models.SerializableModel):
+        name = ""
+        age = 20
+
+
+class ActorWrapper(SoledadDocumentWrapper):
+    class model(models.SerializableModel):
+        type_ = "actor"
+        name = None
+
+        class __meta__(object):
+            index = "name"
+
+
+class TestAdaptor(SoledadIndexMixin):
+    indexes = {'by-name': ['name'],
+               'by-type-and-name': ['type', 'name']}
+
+
 class SoledadDocWrapperTestCase(unittest.TestCase, SoledadTestMixin):
+    """
+    Tests for the SoledadDocumentWrapper.
+    """
+
+    def test_create_single(self):
+
+        store = self._soledad
+        wrapper = CounterWrapper()
+
+        def assert_one_doc(docs):
+            self.assertEqual(docs[0], 1)
+
+        d = wrapper.create(store)
+        d.addCallback(lambda _: store.get_all_docs())
+        d.addCallback(assert_one_doc)
+        return d
+
+    def test_create_many(self):
+
+        store = self._soledad
+        w1 = CounterWrapper()
+        w2 = CounterWrapper(counter=1)
+        w3 = CounterWrapper(counter=2)
+        w4 = CounterWrapper(counter=3)
+        w5 = CounterWrapper(counter=4)
+
+        d1 = [w1.create(store),
+              w2.create(store),
+              w3.create(store),
+              w4.create(store),
+              w5.create(store)]
+
+        def assert_num_docs(docs):
+            self.assertEqual(docs[0], 5)
+
+        d = defer.gatherResults(d1)
+        d.addCallback(lambda _: store.get_all_docs())
+        d.addCallback(assert_num_docs)
+        return d
 
     def test_multiple_updates(self):
 
@@ -160,4 +227,72 @@ class SoledadDocWrapperTestCase(unittest.TestCase, SoledadTestMixin):
         d.addCallback(lambda _: store.get_doc(wrapper._doc_id))
         d.addCallback(assert_counter_final_ok)
         d.addCallback(assert_results_ordered_list)
+        return d
+
+    def test_get_or_create(self):
+        adaptor = TestAdaptor()
+        store = self._soledad
+
+        def assert_num_docs(num, docs):
+            self.assertEqual(docs[0], num)
+
+        def get_or_create_bob(ignored):
+            wrapper = CharacterWrapper.get_or_create(
+                store, 'by-name', 'bob')
+            return wrapper
+
+        d = adaptor.initialize_store(store)
+        d.addCallback(lambda _: store.get_all_docs())
+        d.addCallback(partial(assert_num_docs, 0))
+
+        # this should create bob document
+        d.addCallback(get_or_create_bob)
+        d.addCallback(lambda _: store.get_all_docs())
+        d.addCallback(partial(assert_num_docs, 1))
+
+        # this should get us bob document
+        d.addCallback(get_or_create_bob)
+        d.addCallback(lambda _: store.get_all_docs())
+        d.addCallback(partial(assert_num_docs, 1))
+        return d
+
+    def test_get_or_create_multi_index(self):
+        adaptor = TestAdaptor()
+        store = self._soledad
+
+        def assert_num_docs(num, docs):
+            self.assertEqual(docs[0], num)
+
+        def get_or_create_actor_harry(ignored):
+            wrapper = ActorWrapper.get_or_create(
+                store, 'by-type-and-name', 'harrison')
+            return wrapper
+
+        def create_director_harry(ignored):
+            wrapper = ActorWrapper(name="harrison", type="director")
+            return wrapper.create(store)
+
+        d = adaptor.initialize_store(store)
+        d.addCallback(lambda _: store.get_all_docs())
+        d.addCallback(partial(assert_num_docs, 0))
+
+        # this should create harrison document
+        d.addCallback(get_or_create_actor_harry)
+        d.addCallback(lambda _: store.get_all_docs())
+        d.addCallback(partial(assert_num_docs, 1))
+
+        # this should get us harrison document
+        d.addCallback(get_or_create_actor_harry)
+        d.addCallback(lambda _: store.get_all_docs())
+        d.addCallback(partial(assert_num_docs, 1))
+
+        # create director harry, should create new doc
+        d.addCallback(create_director_harry)
+        d.addCallback(lambda _: store.get_all_docs())
+        d.addCallback(partial(assert_num_docs, 2))
+
+        # this should get us harrison document, still 2 docs
+        d.addCallback(get_or_create_actor_harry)
+        d.addCallback(lambda _: store.get_all_docs())
+        d.addCallback(partial(assert_num_docs, 2))
         return d
