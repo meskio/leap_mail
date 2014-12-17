@@ -18,7 +18,7 @@
 Soledadad MailAdaptor module.
 """
 import re
-from collections import defaultdict, namedtuple
+from collections import defaultdict
 from email import message_from_string
 
 from pycryptopp.hash import sha256
@@ -53,6 +53,13 @@ class DuplicatedDocumentError(Exception):
 
 
 class SoledadDocumentWrapper(models.DocumentWrapper):
+    """
+    A Wrapper object that can be manipulated, passed around, and serialized in
+    a format that the Soledad Store understands.
+
+    It ensures atomicity of the document operations on creation, update and
+    deletion.
+    """
 
     # TODO we could also use a _dirty flag (in models)
 
@@ -151,6 +158,15 @@ class SoledadDocumentWrapper(models.DocumentWrapper):
         """
         Get a unique DocumentWrapper by index, or create a new one if the
         matching query does not exist.
+
+        :param index: the primary index for the model.
+        :type index: str
+        :param value: the value to query the primary index.
+        :type value: str
+
+        :return: a deferred that will be fired with the SoledadDocumentWrapper
+                 matching the index query, either existing or just created.
+        :rtype: Deferred
         """
         return cls._get_klass_lock().run(
             cls._get_or_create, store, index, value)
@@ -192,7 +208,7 @@ class SoledadDocumentWrapper(models.DocumentWrapper):
 
         def wrap_existing_or_create_new(doc):
             if doc:
-                return cls(**doc.content)
+                return cls(doc_id=doc.doc_id, **doc.content)
             else:
                 return create_and_wrap_new_doc()
 
@@ -231,16 +247,61 @@ class SoledadDocumentWrapper(models.DocumentWrapper):
         return d
 
     @classmethod
-    def get_all(cls):
-        # TODO confirm we want this
-        # get a collection of wrappers around all the documents belonging
-        # to this kind.
-        pass
+    def get_all(cls, store):
+        """
+        Get a collection of wrappers around all the documents belonging
+        to this kind.
 
+        For this to work, the model.__meta__ needs to include a tuple with
+        the index to be used for listing purposes, and which is the field to be
+        used to query the index.
 
-# a very thin wrapper to hide the u1db document id in methods
-# where we don't need to get the full document from the database.
-#U1DBDocWrapper = namedtuple('u1dbDocWrapper', ['doc_id'])
+        Note that this method only supports indexes of a single field at the
+        moment. It also might be too expensive to return all the documents
+        matching the query, so handle with care.
+
+        class __meta__(object):
+            index = "name"
+            list_index = ("by-type", "type_")
+
+        :return: a deferred that will be fired with an iterable containing
+                 as many SoledadDocumentWrapper are matching the index defined
+                 in the model as the `list_index`.
+        :rtype: Deferred
+        """
+        # TODO
+        # [ ] extend support to indexes with n-ples
+        # [ ] benchmark the cost of querying and returning indexes in a big
+        #     database. This might badly need pagination before being put to
+        #     serious use.
+        return cls._get_klass_lock().run(cls._get_all, store)
+
+    @classmethod
+    def _get_all(cls, store):
+        try:
+            list_index, list_attr = cls.model.__meta__.list_index
+        except AttributeError:
+            raise RuntimeError("The model is badly defined: no list_index")
+        try:
+            index_value = getattr(cls.model, list_attr)
+        except AttributeError:
+            raise RuntimeError("The model is badly defined: "
+                               "no attribute matching list_index")
+
+        def wrap_docs(docs):
+            return (cls(doc_id=doc.doc_id, **doc.content) for doc in docs)
+
+        d = store.get_from_index(list_index, index_value)
+        d.addCallback(wrap_docs)
+        return d
+
+    def __repr__(self):
+        try:
+            idx = getattr(self, self.model.__meta__.index)
+        except AttributeError:
+            idx = ""
+        return "<%s: %s (%s)>" % (self.__class__.__name__,
+                                  idx, self._doc_id)
 
 
 #
@@ -298,7 +359,10 @@ class ContentDocWrapper(SoledadDocumentWrapper):
 
 
 class MessageWrapper(object):
+
     # TODO generalize wrapper composition
+    # This could benefit of a DeferredLock to create/update all the
+    # documents at the same time maybe, and defend against concurrent updates?
 
     implements(IMessageWrapper)
 

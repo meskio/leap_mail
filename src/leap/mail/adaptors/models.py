@@ -93,6 +93,23 @@ class DocumentWrapper(object):
     def serialize(self):
         return _normalize_dict(self.__dict__)
 
+    def create(self):
+        raise NotImplementedError()
+
+    def update(self):
+        raise NotImplementedError()
+
+    def delete(self):
+        raise NotImplementedError()
+
+    @classmethod
+    def get_or_create(self):
+        raise NotImplementedError()
+
+    @classmethod
+    def get_all(self):
+        raise NotImplementedError()
+
 
 def _normalize_dict(_dict):
     items = _dict.items()

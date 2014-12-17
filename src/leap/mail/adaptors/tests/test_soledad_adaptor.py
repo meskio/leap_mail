@@ -137,11 +137,13 @@ class ActorWrapper(SoledadDocumentWrapper):
 
         class __meta__(object):
             index = "name"
+            list_index = ("by-type", "type_")
 
 
 class TestAdaptor(SoledadIndexMixin):
     indexes = {'by-name': ['name'],
-               'by-type-and-name': ['type', 'name']}
+               'by-type-and-name': ['type', 'name'],
+               'by-type': ['type']}
 
 
 class SoledadDocWrapperTestCase(unittest.TestCase, SoledadTestMixin):
@@ -322,6 +324,37 @@ class SoledadDocWrapperTestCase(unittest.TestCase, SoledadTestMixin):
         d.addCallback(get_or_create_actor_harry)
         d.addCallback(lambda _: store.get_all_docs())
         d.addCallback(partial(self.assert_num_docs, 2))
+        return d
+
+    def test_get_all(self):
+        adaptor = TestAdaptor()
+        store = self._soledad
+        actor_names = ["harry", "carrie", "mark", "david"]
+
+        def create_some_actors(ignored):
+            deferreds = []
+            for name in actor_names:
+                dw = ActorWrapper.get_or_create(
+                    store, 'by-type-and-name', name)
+                deferreds.append(dw)
+            return defer.gatherResults(deferreds)
+
+        d = adaptor.initialize_store(store)
+        d.addCallback(lambda _: store.get_all_docs())
+        d.addCallback(partial(self.assert_num_docs, 0))
+
+        d.addCallback(create_some_actors)
+
+        d.addCallback(lambda _: store.get_all_docs())
+        d.addCallback(partial(self.assert_num_docs, 4))
+
+        def assert_actor_list_is_expected(res):
+            got = set([actor.name for actor in res])
+            expected = set(actor_names)
+            self.assertEqual(got, expected)
+
+        d.addCallback(lambda _: ActorWrapper.get_all(store))
+        d.addCallback(assert_actor_list_is_expected)
         return d
 
 
