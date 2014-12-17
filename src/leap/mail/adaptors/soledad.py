@@ -18,7 +18,7 @@
 Soledadad MailAdaptor module.
 """
 import re
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 from email import message_from_string
 
 from pycryptopp.hash import sha256
@@ -89,6 +89,9 @@ class SoledadDocumentWrapper(models.DocumentWrapper):
                  Soledad document has been created.
         :rtype: Deferred
         """
+        leap_assert(self._doc_id is None,
+                    "This document already has a doc_id!")
+
         def update_doc_id(doc):
             self._doc_id = doc.doc_id
             return doc
@@ -109,7 +112,7 @@ class SoledadDocumentWrapper(models.DocumentWrapper):
 
     def _update(self, store):
         leap_assert(self._doc_id is not None,
-                    "Need to create doc before update")
+                    "Need to create doc before updating")
 
         def update_and_put_doc(doc):
             doc.content.update(self.serialize())
@@ -117,6 +120,30 @@ class SoledadDocumentWrapper(models.DocumentWrapper):
 
         d = store.get_doc(self._doc_id)
         d.addCallback(update_and_put_doc)
+        return d
+
+    def delete(self, store):
+        """
+        Delete the documents for this wrapper.
+
+        :return: a deferred that will fire when the underlying
+                 Soledad document has been deleted.
+        :rtype: Deferred
+        """
+        # the deferred lock guards against conflicts while updating
+        return self._lock.run(self._delete, store)
+
+    def _delete(self, store):
+        leap_assert(self._doc_id is not None,
+                    "Need to create doc before deleting")
+        # XXX might want to flag this DocumentWrapper to avoid
+        # updating it by mistake. This could go in models.DocumentWrapper
+
+        def delete_doc(doc):
+            return store.delete_doc(doc)
+
+        d = store.get_doc(self._doc_id)
+        d.addCallback(delete_doc)
         return d
 
     @classmethod
@@ -203,6 +230,18 @@ class SoledadDocumentWrapper(models.DocumentWrapper):
         d.addCallback(wrap_existing_or_create_new)
         return d
 
+    @classmethod
+    def get_all(cls):
+        # TODO confirm we want this
+        # get a collection of wrappers around all the documents belonging
+        # to this kind.
+        pass
+
+
+# a very thin wrapper to hide the u1db document id in methods
+# where we don't need to get the full document from the database.
+#U1DBDocWrapper = namedtuple('u1dbDocWrapper', ['doc_id'])
+
 
 #
 # Message documents
@@ -269,6 +308,7 @@ class MessageWrapper(object):
         MessageWrapper. Content-documents can be retrieved lazily.
         """
         # TODO must enforce we're receiving DocWrappers
+        # XXX - or, maybe, wrap them here...
         self.fdoc = fdoc
         self.hdoc = hdoc
         if cdocs is None:
@@ -403,26 +443,19 @@ class SoledadMailAdaptor(SoledadIndexMixin):
     # Maybe the best place is MessageCollection (since Mailbox
     # will contain one of that).
 
-    def create_msg_docs(self, store, msg_wrapper):
+    def create_msg(self, store, msg_wrapper):
+        # XXX iterate through parts of the msg_wrapper
+        # and create them.
+        # 1. cdocs should not be empty
+        # 2. fdoc/hdoc should not have doc_id
+        # 3. if cdocs exist, it might already have the doc_id
         pass
 
-    def update_msg_flags(self, store, msg_wrapper):
-        pass
-
-    def update_msg_tags(self, store, msg_wrapper):
-        pass
+    def update_msg(self, store, msg_wrapper):
+        return msg_wrapper.update(store)
 
     # mailbox methods in adaptor too???
     # for symmetry, sounds good to have
-
-    def get_all_mboxes(self, store):
-        def get_names(docs):
-            return [doc.content["mbox"] for doc in docs]
-
-        d = store.get_from_index(self.indexes.TYPE_IDX, "mbox")
-        d.addCallback(get_names)
-        # XXX --- return MailboxWrapper instead
-        return d
 
     def get_or_create_mbox(self, store, name):
         index = self.indexes.TYPE_MBOX_IDX
@@ -431,6 +464,17 @@ class SoledadMailAdaptor(SoledadIndexMixin):
 
     def update_mbox(self, store, mbox_wrapper):
         return mbox_wrapper.update(store)
+
+    def get_all_mboxes(self, store):
+        def get_names(docs):
+            return [doc.content["mbox"] for doc in docs]
+
+        # XXX --- use SoledadDocumentWrapper.get_all instead
+        # XXX --- use u1db.get_index_keys ???
+        d = store.get_from_index(self.indexes.TYPE_IDX, "mbox")
+        d.addCallback(get_names)
+        # XXX --- return MailboxWrapper instead
+        return d
 
 
 def _split_into_parts(raw):

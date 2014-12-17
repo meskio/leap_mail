@@ -92,7 +92,8 @@ class MessageCollection(object):
 
     # TODO look at IMessageSet methods
 
-    adaptor = SoledadMailAdaptor
+    # Account should provide an adaptor instance when creating this collection.
+    adaptor = None
     store = None
 
     def get_message_by_doc_id(self, doc_id):
@@ -107,10 +108,16 @@ class MessageCollection(object):
         pass
 
     def udpate_flags():
+        # 1. update the flags in the message wrapper --- stored where???
+        # 2. call adaptor.update_msg(store)
         pass
 
     def update_tags():
+        # 1. update the tags in the message wrapper --- stored where???
+        # 2. call adaptor.update_msg(store)
         pass
+
+    # TODO add delete methods here?
 
 
 class Account(object):
@@ -130,12 +137,13 @@ class Account(object):
     # use a different adaptor this is the place to change it, by subclassing
     # the Account class.
 
-    adaptor = SoledadMailAdaptor
+    adaptor_class = SoledadMailAdaptor
     store = None
     mailboxes = None
 
     def __init__(self, store):
         self.store = store
+        self.adaptor = self.adaptor_class()
 
         self.__mailboxes = set([])
         self._initialized = False

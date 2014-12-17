@@ -30,6 +30,7 @@ from leap.common.testing.basetest import BaseLeapTest
 from leap.mail.adaptors import models
 from leap.mail.adaptors.soledad import SoledadDocumentWrapper
 from leap.mail.adaptors.soledad import SoledadIndexMixin
+from leap.mail.adaptors.soledad import SoledadMailAdaptor
 from leap.soledad.client import Soledad
 
 TEST_USER = "testuser@leap.se"
@@ -147,6 +148,8 @@ class SoledadDocWrapperTestCase(unittest.TestCase, SoledadTestMixin):
     """
     Tests for the SoledadDocumentWrapper.
     """
+    def assert_num_docs(self, num, docs):
+        self.assertEqual(len(docs[1]), num)
 
     def test_create_single(self):
 
@@ -176,12 +179,9 @@ class SoledadDocWrapperTestCase(unittest.TestCase, SoledadTestMixin):
               w4.create(store),
               w5.create(store)]
 
-        def assert_num_docs(docs):
-            self.assertEqual(docs[0], 5)
-
         d = defer.gatherResults(d1)
         d.addCallback(lambda _: store.get_all_docs())
-        d.addCallback(assert_num_docs)
+        d.addCallback(partial(self.assert_num_docs, 5))
         return d
 
     def test_multiple_updates(self):
@@ -229,12 +229,42 @@ class SoledadDocWrapperTestCase(unittest.TestCase, SoledadTestMixin):
         d.addCallback(assert_results_ordered_list)
         return d
 
-    def test_get_or_create(self):
+    def test_delete(self):
         adaptor = TestAdaptor()
         store = self._soledad
 
-        def assert_num_docs(num, docs):
-            self.assertEqual(docs[0], num)
+        wrapper_list = []
+
+        def get_or_create_bob(ignored):
+            def add_to_list(wrapper):
+                wrapper_list.append(wrapper)
+                return wrapper
+            wrapper = CharacterWrapper.get_or_create(
+                store, 'by-name', 'bob')
+            wrapper.addCallback(add_to_list)
+            return wrapper
+
+        def delete_bob(ignored):
+            wrapper = wrapper_list[0]
+            return wrapper.delete(store)
+
+        d = adaptor.initialize_store(store)
+        d.addCallback(lambda _: store.get_all_docs())
+        d.addCallback(partial(self.assert_num_docs, 0))
+
+        # this should create bob document
+        d.addCallback(get_or_create_bob)
+        d.addCallback(lambda _: store.get_all_docs())
+        d.addCallback(partial(self.assert_num_docs, 1))
+
+        d.addCallback(delete_bob)
+        d.addCallback(lambda _: store.get_all_docs())
+        d.addCallback(partial(self.assert_num_docs, 0))
+        return d
+
+    def test_get_or_create(self):
+        adaptor = TestAdaptor()
+        store = self._soledad
 
         def get_or_create_bob(ignored):
             wrapper = CharacterWrapper.get_or_create(
@@ -243,25 +273,22 @@ class SoledadDocWrapperTestCase(unittest.TestCase, SoledadTestMixin):
 
         d = adaptor.initialize_store(store)
         d.addCallback(lambda _: store.get_all_docs())
-        d.addCallback(partial(assert_num_docs, 0))
+        d.addCallback(partial(self.assert_num_docs, 0))
 
         # this should create bob document
         d.addCallback(get_or_create_bob)
         d.addCallback(lambda _: store.get_all_docs())
-        d.addCallback(partial(assert_num_docs, 1))
+        d.addCallback(partial(self.assert_num_docs, 1))
 
         # this should get us bob document
         d.addCallback(get_or_create_bob)
         d.addCallback(lambda _: store.get_all_docs())
-        d.addCallback(partial(assert_num_docs, 1))
+        d.addCallback(partial(self.assert_num_docs, 1))
         return d
 
     def test_get_or_create_multi_index(self):
         adaptor = TestAdaptor()
         store = self._soledad
-
-        def assert_num_docs(num, docs):
-            self.assertEqual(docs[0], num)
 
         def get_or_create_actor_harry(ignored):
             wrapper = ActorWrapper.get_or_create(
@@ -274,25 +301,62 @@ class SoledadDocWrapperTestCase(unittest.TestCase, SoledadTestMixin):
 
         d = adaptor.initialize_store(store)
         d.addCallback(lambda _: store.get_all_docs())
-        d.addCallback(partial(assert_num_docs, 0))
+        d.addCallback(partial(self.assert_num_docs, 0))
 
         # this should create harrison document
         d.addCallback(get_or_create_actor_harry)
         d.addCallback(lambda _: store.get_all_docs())
-        d.addCallback(partial(assert_num_docs, 1))
+        d.addCallback(partial(self.assert_num_docs, 1))
 
         # this should get us harrison document
         d.addCallback(get_or_create_actor_harry)
         d.addCallback(lambda _: store.get_all_docs())
-        d.addCallback(partial(assert_num_docs, 1))
+        d.addCallback(partial(self.assert_num_docs, 1))
 
         # create director harry, should create new doc
         d.addCallback(create_director_harry)
         d.addCallback(lambda _: store.get_all_docs())
-        d.addCallback(partial(assert_num_docs, 2))
+        d.addCallback(partial(self.assert_num_docs, 2))
 
         # this should get us harrison document, still 2 docs
         d.addCallback(get_or_create_actor_harry)
         d.addCallback(lambda _: store.get_all_docs())
-        d.addCallback(partial(assert_num_docs, 2))
+        d.addCallback(partial(self.assert_num_docs, 2))
         return d
+
+
+class SoledadMailAdaptorTestCase(unittest.TestCase, SoledadTestMixin):
+    """
+    Tests for the SoledadMailAdaptor.
+    """
+
+    def get_adaptor(self):
+        adaptor = SoledadMailAdaptor()
+        adaptor.store = self._soledad
+        return adaptor
+
+    def test_mail_adaptor_init(self):
+        adaptor = self.get_adaptor()
+        self.assertTrue(len(adaptor.indexes) != 0)
+        self.assertTrue(isinstance(adaptor.indexes, dict))
+
+    def test_get_msg_from_string(self):
+        self.fail()
+
+    def test_get_msg_from_docs(self):
+        self.fail()
+
+    def test_create_msg(self):
+        self.fail()
+
+    def test_update_msg(self):
+        self.fail()
+
+    def test_get_or_create_mbox(self):
+        self.fail()
+
+    def test_update_mbox(self):
+        self.fail()
+
+    def test_get_all_mboxes(self):
+        self.fail()
