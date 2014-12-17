@@ -507,12 +507,77 @@ class SoledadMailAdaptorTestCase(unittest.TestCase, SoledadTestMixin):
 
     def test_get_or_create_mbox(self):
         adaptor = self.get_adaptor()
-        self.fail()
+
+        def get_or_create_mbox(ignored):
+            d = adaptor.get_or_create_mbox(adaptor.store, "Trash")
+            return d
+
+        def assert_good_doc(mbox_wrapper):
+            self.assertTrue(mbox_wrapper.doc_id is not None)
+            self.assertEqual(mbox_wrapper.mbox, "Trash")
+            self.assertEqual(mbox_wrapper.type, "mbox")
+            self.assertEqual(mbox_wrapper.closed, False)
+            self.assertEqual(mbox_wrapper.subscribed, False)
+
+        d = adaptor.initialize_store(adaptor.store)
+        d.addCallback(get_or_create_mbox)
+        d.addCallback(assert_good_doc)
+        d.addCallback(lambda _: adaptor.store.get_all_docs())
+        d.addCallback(partial(self.assert_num_docs, 1))
+        return d
 
     def test_update_mbox(self):
         adaptor = self.get_adaptor()
-        self.fail()
+
+        wrapper_ref = []
+
+        def get_or_create_mbox(ignored):
+            d = adaptor.get_or_create_mbox(adaptor.store, "Trash")
+            return d
+
+        def update_wrapper(wrapper, wrapper_ref):
+            wrapper_ref.append(wrapper)
+            wrapper.subscribed = True
+            wrapper.closed = True
+            d = adaptor.update_mbox(adaptor.store, wrapper)
+            return d
+
+        def get_mbox_doc_and_check_flags(res, wrapper_ref):
+            wrapper = wrapper_ref[0]
+
+            def assert_doc_has_flags(doc):
+                self.assertEqual(doc.content['subscribed'], True)
+                self.assertEqual(doc.content['closed'], True)
+            d = adaptor.store.get_doc(wrapper.doc_id)
+            d.addCallback(assert_doc_has_flags)
+            return d
+
+        d = adaptor.initialize_store(adaptor.store)
+        d.addCallback(get_or_create_mbox)
+        d.addCallback(update_wrapper, wrapper_ref)
+        d.addCallback(get_mbox_doc_and_check_flags, wrapper_ref)
+        return d
 
     def test_get_all_mboxes(self):
         adaptor = self.get_adaptor()
-        self.fail()
+        mboxes = ("Sent", "Trash", "Personal", "ListFoo")
+
+        def get_or_create_mboxes(ignored):
+            d = []
+            for mbox in mboxes:
+                d.append(adaptor.get_or_create_mbox(
+                    adaptor.store, mbox))
+            return defer.gatherResults(d)
+
+        def get_all_mboxes(ignored):
+            return adaptor.get_all_mboxes(adaptor.store)
+
+        def assert_mboxes_match_expected(wrappers):
+            names = [m.mbox for m in wrappers]
+            self.assertEqual(set(names), set(mboxes))
+
+        d = adaptor.initialize_store(adaptor.store)
+        d.addCallback(get_or_create_mboxes)
+        d.addCallback(get_all_mboxes)
+        d.addCallback(assert_mboxes_match_expected)
+        return d
