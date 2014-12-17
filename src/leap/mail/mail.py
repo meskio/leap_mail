@@ -36,6 +36,9 @@ class Message(object):
         """
         self._wrapper = wrapper
 
+    def get_wrapper(self):
+        return self._wrapper
+
     # imap.IMessage methods
 
     def get_flags():

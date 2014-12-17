@@ -364,6 +364,9 @@ class TestMessageClass(object):
     def __init__(self, wrapper):
         self.wrapper = wrapper
 
+    def get_wrapper(self):
+        return self.wrapper
+
 
 class SoledadMailAdaptorTestCase(unittest.TestCase, SoledadTestMixin):
     """
@@ -374,6 +377,9 @@ class SoledadMailAdaptorTestCase(unittest.TestCase, SoledadTestMixin):
         adaptor = SoledadMailAdaptor()
         adaptor.store = self._soledad
         return adaptor
+
+    def assert_num_docs(self, num, docs):
+        self.assertEqual(len(docs[1]), num)
 
     def test_mail_adaptor_init(self):
         adaptor = self.get_adaptor()
@@ -410,15 +416,92 @@ class SoledadMailAdaptorTestCase(unittest.TestCase, SoledadTestMixin):
 
     def test_get_msg_from_docs(self):
         adaptor = self.get_adaptor()
-        self.fail()
+        fdoc = dict(
+            mbox="Foobox",
+            flags=('\Seen', '\Nice'),
+            tags=('Personal', 'TODO'),
+            seen=False, deleted=False,
+            recent=False, multi=False)
+        hdoc = dict(
+            subject="Test Msg")
+        cdocs = {
+            1: dict(
+                raw='This is a test message')}
+
+        msg = adaptor.get_msg_from_docs(
+            TestMessageClass, fdoc, hdoc, cdocs=cdocs)
+        self.assertEqual(msg.wrapper.fdoc.flags,
+                         ('\Seen', '\Nice'))
+        self.assertEqual(msg.wrapper.fdoc.tags,
+                         ('Personal', 'TODO'))
+        self.assertEqual(msg.wrapper.fdoc.mbox, "Foobox")
+        self.assertEqual(msg.wrapper.hdoc.multi, False)
+        self.assertEqual(msg.wrapper.hdoc.subject,
+                         "Test Msg")
+        self.assertEqual(msg.wrapper.cdocs[1].raw,
+                         "This is a test message")
 
     def test_create_msg(self):
         adaptor = self.get_adaptor()
-        self.fail()
+
+        with open(os.path.join(here, "rfc822.message")) as f:
+            raw = f.read()
+        msg = adaptor.get_msg_from_string(TestMessageClass, raw)
+
+        def check_create_result(created):
+            self.assertEqual(len(created), 3)
+            for doc in created:
+                self.assertTrue(
+                    doc.__class__.__name__,
+                    "SoledadDocument")
+
+        d = adaptor.create_msg(adaptor.store, msg)
+        d.addCallback(check_create_result)
+        return d
 
     def test_update_msg(self):
         adaptor = self.get_adaptor()
-        self.fail()
+        with open(os.path.join(here, "rfc822.message")) as f:
+            raw = f.read()
+
+        def assert_msg_has_doc_id(ignored, msg):
+            wrapper = msg.get_wrapper()
+            self.assertTrue(wrapper.fdoc.doc_id is not None)
+
+        def assert_msg_has_no_flags(ignored, msg):
+            wrapper = msg.get_wrapper()
+            self.assertEqual(wrapper.fdoc.flags, [])
+
+        def update_msg_flags(ignored, msg):
+            wrapper = msg.get_wrapper()
+            wrapper.fdoc.flags = ["This", "That"]
+            return wrapper.update(adaptor.store)
+
+        def assert_msg_has_flags(ignored, msg):
+            wrapper = msg.get_wrapper()
+            self.assertEqual(wrapper.fdoc.flags, ["This", "That"])
+
+        def get_fdoc_and_check_flags(ignored):
+            def assert_doc_has_flags(doc):
+                self.assertEqual(doc.content['flags'],
+                                 ['This', 'That'])
+            wrapper = msg.get_wrapper()
+            d = adaptor.store.get_doc(wrapper.fdoc.doc_id)
+            d.addCallback(assert_doc_has_flags)
+            return d
+
+        msg = adaptor.get_msg_from_string(TestMessageClass, raw)
+        d = adaptor.create_msg(adaptor.store, msg)
+        d.addCallback(lambda _: adaptor.store.get_all_docs())
+        d.addCallback(partial(self.assert_num_docs, 3))
+        d.addCallback(assert_msg_has_doc_id, msg)
+        d.addCallback(assert_msg_has_no_flags, msg)
+
+        # update it!
+        d.addCallback(update_msg_flags, msg)
+        d.addCallback(assert_msg_has_flags, msg)
+        d.addCallback(get_fdoc_and_check_flags)
+        return d
 
     # Mailboxes
 
