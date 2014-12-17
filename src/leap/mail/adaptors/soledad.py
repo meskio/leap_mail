@@ -295,6 +295,9 @@ class SoledadDocumentWrapper(models.DocumentWrapper):
         d.addCallback(wrap_docs)
         return d
 
+    # TODO
+    # [ ] get_count() ???
+
     def __repr__(self):
         try:
             idx = getattr(self, self.model.__meta__.index)
@@ -339,6 +342,7 @@ class HeaderDocWrapper(SoledadDocumentWrapper):
         part_map = {}
         body = ""  # link to phash of body
         msgid = ""
+        multi = False
 
         class __meta__(object):
             index = "chash"
@@ -353,6 +357,10 @@ class ContentDocWrapper(SoledadDocumentWrapper):
         ctype = ""  # XXX index by ctype too?
         lkf = []  # XXX not implemented yet!
         raw = ""
+
+        content_disposition = ""
+        content_transfer_encoding = ""
+        content_type = ""
 
         class __meta__(object):
             index = "phash"
@@ -373,11 +381,12 @@ class MessageWrapper(object):
         """
         # TODO must enforce we're receiving DocWrappers
         # XXX - or, maybe, wrap them here...
-        self.fdoc = fdoc
-        self.hdoc = hdoc
+        self.fdoc = FlagsDocWrapper(**fdoc)
+        self.hdoc = HeaderDocWrapper(**hdoc)
         if cdocs is None:
             cdocs = {}
-        self.cdocs = cdocs
+        self.cdocs = dict([(key, ContentDocWrapper(**doc)) for (key, doc) in
+                           cdocs.items()])
 
 #
 # Mailboxes
@@ -483,29 +492,23 @@ class SoledadMailAdaptor(SoledadIndexMixin):
 
     indexes = indexes.MAIL_INDEXES
 
-    #@staticmethod
-    def get_msg_from_string(MessageClass, raw_msg):
+    # Message handling
+
+    def get_msg_from_string(self, MessageClass, raw_msg):
         """
         :rtype: MessageClass instance.
         """
         assert(MessageClass is not None)
         fdoc, hdoc, cdocs = _split_into_parts(raw_msg)
-        return SoledadMailAdaptor.msg_from_docs(
+        return self.get_msg_from_docs(
             MessageClass, MessageWrapper(fdoc, hdoc, cdocs))
 
-    #@staticmethod
-    def get_msg_from_docs(MessageClass, msg_wrapper):
+    def get_msg_from_docs(self, MessageClass, msg_wrapper):
         """
         :rtype: MessageClass instance.
         """
         assert(MessageClass is not None)
         return MessageClass(msg_wrapper)
-
-    # XXX TO BE DECIDED YET ---- see interfaces...
-    # These methods will contain the create/put, but they should
-    # be invoked from a clear point in the public API.
-    # Maybe the best place is MessageCollection (since Mailbox
-    # will contain one of that).
 
     def create_msg(self, store, msg_wrapper):
         # XXX iterate through parts of the msg_wrapper
@@ -518,8 +521,7 @@ class SoledadMailAdaptor(SoledadIndexMixin):
     def update_msg(self, store, msg_wrapper):
         return msg_wrapper.update(store)
 
-    # mailbox methods in adaptor too???
-    # for symmetry, sounds good to have
+    # Mailbox handling
 
     def get_or_create_mbox(self, store, name):
         index = self.indexes.TYPE_MBOX_IDX
@@ -530,13 +532,7 @@ class SoledadMailAdaptor(SoledadIndexMixin):
         return mbox_wrapper.update(store)
 
     def get_all_mboxes(self, store):
-        def get_names(docs):
-            return [doc.content["mbox"] for doc in docs]
-
         # XXX --- use SoledadDocumentWrapper.get_all instead
-        # XXX --- use u1db.get_index_keys ???
-        d = store.get_from_index(self.indexes.TYPE_IDX, "mbox")
-        d.addCallback(get_names)
         # XXX --- return MailboxWrapper instead
         return d
 
@@ -600,14 +596,14 @@ def _build_headers_doc(msg, chash, parts_map):
         lower_headers.get('message-id', '')))
 
     _hdoc = HeaderDocWrapper(
-        chash=chash, headers=headers, msgid=msgid)
+        chash=chash, headers=lower_headers, msgid=msgid)
 
     def copy_attr(headers, key, doc):
         if key in headers:
             setattr(doc, key, headers[key])
 
-    copy_attr(headers, "subject", _hdoc)
-    copy_attr(headers, "date", _hdoc)
+    copy_attr(lower_headers, "subject", _hdoc)
+    copy_attr(lower_headers, "date", _hdoc)
 
     hdoc = _hdoc.serialize()
     # add parts map to header doc
@@ -615,8 +611,3 @@ def _build_headers_doc(msg, chash, parts_map):
     for key in parts_map:
         hdoc[key] = parts_map[key]
     return stringify_parts_map(hdoc)
-
-
-#def _build_mbox_wrapper():
-    #_mbox_doc = MailboxWrapper()
-    #return _mbox_doc.serialize()

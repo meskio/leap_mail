@@ -81,13 +81,15 @@ class DocumentWrapper(object):
             values = defaults
 
         for k, v in values.items():
+            k = k.replace('-', '_')
             setattr(self, k, v)
 
     def __setattr__(self, attr, value):
         normalized = _normalize_dict(self.model.__dict__)
         if not attr.startswith('_') and attr not in normalized:
             raise RuntimeError(
-                "Cannot set attribute because it's not defined in the model")
+                "Cannot set attribute because it's not defined "
+                "in the model: %s" % attr)
         object.__setattr__(self, attr, value)
 
     def serialize(self):
@@ -119,4 +121,5 @@ def _normalize_dict(_dict):
         items = filter(cond, items)
     items = [(k, v) if not k.endswith('_') else (k[:-1], v)
              for (k, v) in items]
+    items = [(k.replace('-', '_'), v) for (k, v) in items]
     return dict(items)

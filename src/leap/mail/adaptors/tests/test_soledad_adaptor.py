@@ -357,6 +357,13 @@ class SoledadDocWrapperTestCase(unittest.TestCase, SoledadTestMixin):
         d.addCallback(assert_actor_list_is_expected)
         return d
 
+here = os.path.split(os.path.abspath(__file__))[0]
+
+
+class TestMessageClass(object):
+    def __init__(self, wrapper):
+        self.wrapper = wrapper
+
 
 class SoledadMailAdaptorTestCase(unittest.TestCase, SoledadTestMixin):
     """
@@ -370,26 +377,59 @@ class SoledadMailAdaptorTestCase(unittest.TestCase, SoledadTestMixin):
 
     def test_mail_adaptor_init(self):
         adaptor = self.get_adaptor()
-        self.assertTrue(len(adaptor.indexes) != 0)
         self.assertTrue(isinstance(adaptor.indexes, dict))
+        self.assertTrue(len(adaptor.indexes) != 0)
+
+    # Messages
 
     def test_get_msg_from_string(self):
-        self.fail()
+        adaptor = self.get_adaptor()
+
+        with open(os.path.join(here, "rfc822.message")) as f:
+            raw = f.read()
+
+        msg = adaptor.get_msg_from_string(TestMessageClass, raw)
+
+        chash = ("D27B2771C0DCCDCB468EE65A4540438"
+                 "09DBD11588E87E951545BE0CBC321C308")
+        phash = ("64934534C1C80E0D4FA04BE1CCBA104"
+                 "F07BCA5F469C86E2C0ABE1D41310B7299")
+        subject = ("[Twisted-commits] rebuild now works on "
+                   "python versions from 2.2.0 and up.")
+        self.assertTrue(msg.wrapper.fdoc is not None)
+        self.assertTrue(msg.wrapper.hdoc is not None)
+        self.assertTrue(msg.wrapper.cdocs is not None)
+        self.assertEquals(len(msg.wrapper.cdocs), 1)
+        self.assertEquals(msg.wrapper.fdoc.chash, chash)
+        self.assertEquals(msg.wrapper.fdoc.size, 3834)
+        self.assertEquals(msg.wrapper.hdoc.chash, chash)
+        self.assertEqual(msg.wrapper.hdoc.headers['subject'],
+                         subject)
+        self.assertEqual(msg.wrapper.hdoc.subject, subject)
+        self.assertEqual(msg.wrapper.cdocs[1].phash, phash)
 
     def test_get_msg_from_docs(self):
+        adaptor = self.get_adaptor()
         self.fail()
 
     def test_create_msg(self):
+        adaptor = self.get_adaptor()
         self.fail()
 
     def test_update_msg(self):
+        adaptor = self.get_adaptor()
         self.fail()
 
+    # Mailboxes
+
     def test_get_or_create_mbox(self):
+        adaptor = self.get_adaptor()
         self.fail()
 
     def test_update_mbox(self):
+        adaptor = self.get_adaptor()
         self.fail()
 
     def test_get_all_mboxes(self):
+        adaptor = self.get_adaptor()
         self.fail()
