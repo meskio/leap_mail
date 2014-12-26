@@ -41,41 +41,49 @@ class Message(object):
 
     # imap.IMessage methods
 
-    def get_flags():
+    def get_flags(self):
         """
         """
+        return tuple(self._wrapper.fdoc.flags)
 
-    def get_internal_date():
+    def get_internal_date(self):
         """
         """
+        return self._wrapper.fdoc.date
 
     # imap.IMessageParts
 
-    def get_headers():
+    def get_headers(self):
+        """
+        """
+        # XXX process here? from imap.messages
+        return self._wrapper.hdoc.headers
+
+    def get_body_file(self):
         """
         """
 
-    def get_body_file():
+    def get_size(self):
         """
         """
+        return self._wrapper.fdoc.size
 
-    def get_size():
+    def is_multipart(self):
         """
         """
+        return self._wrapper.fdoc.multi
 
-    def is_multipart():
+    def get_subpart(self, part):
         """
         """
-
-    def get_subpart(part):
-        """
-        """
+        # XXX ??? return MessagePart?
 
     # Custom methods.
 
-    def get_tags():
+    def get_tags(self):
         """
         """
+        return tuple(self._wrapper.fdoc.tags)
 
 
 class MessageCollection(object):
@@ -93,29 +101,79 @@ class MessageCollection(object):
     instance or proxy, for instance).
     """
 
-    # TODO look at IMessageSet methods
+    # TODO
+    # [ ] look at IMessageSet methods
+    # [ ] make constructor with a per-instance deferredLock to use on
+    #     creation/deletion?
+    # [ ] Think about passing a mailbox wrapper to this collection, and flag it
+    #     as a "MailboxCollection"
+    #     --- is_mailbox_colllection(eq
+    #     has_mbox_wrapper). This could be used to autoincrement the UID when
+    #     we add a document.
+    #     ---  or maybe have a "collection_type" attribute
+    # [ ] instead of a mailbox, we could pass an arbitrary container with
+    #     pointers to different doc_ids (type: foo)
+    # [ ] To guarantee synchronicity of the documents sent together during a
+    #     sync, we could get hold of a deferredLock that inhibits
+    #     synchronization while we are updating (think more about this!)
 
     # Account should provide an adaptor instance when creating this collection.
     adaptor = None
     store = None
+    messageklass = Message
+
+    # Get message
 
     def get_message_by_doc_id(self, doc_id):
-        # ... get from soledad etc
-        # ... but that should be part of adaptor/store too... :/
-        fdoc, hdoc = None
-        return self.adaptor.from_docs(Message, fdoc=fdoc, hdoc=hdoc)
+        # XXX get from adaptor method
+        # --- get by UID (mailbox)
+        # --- get by
+        return self.adaptor.from_docs(self.messageklass, self.store)
 
-    # TODO review if this is the best place for:
-
-    def create_docs():
+    def get_message_by_mailbox_uid(self, uid, cdocs=False):
+        # XXX get from local table
+        # XXX get fdoc, hdoc...
+        # If cdocs, get cdocs also into wrapper
+        # return Message(Wrapper)
         pass
 
-    def udpate_flags():
+    def get_message_by_content_hash(self, chash):
+        # XXX
+        pass
+
+    #
+
+    def add_msg(self, raw_msg):
+        # XXX
+        # 1. get msg from string...
+        # 2. create message --- need to serialize creation
+        # 3. return deferred
+        pass
+
+    def copy_msg(self, msg):
+        # XXX
+        # copy the message to this collection. (it only makes sense for mailbox
+        # collections)
+        # 1. copy the fdoc ----> I think it's better if Wrapper has a copy
+        #    method.
+        # 2. remove the doc_id of that fdoc
+        # 3. create it
+        wrapper = msg.get_wrapper()
+
+    def delete_msg(self, msg):
+        wrapper = msg.get_wrapper()
+        d = wrapper.delete(self.store)
+        return d
+
+    def udpate_flags(self, msg, flags, mode):
+        wrapper = msg.get_wrapper()
         # 1. update the flags in the message wrapper --- stored where???
-        # 2. call adaptor.update_msg(store)
+        # 2. update the special flags in the wrapper (seen, etc)
+        # 3. call adaptor.update_msg(store)
         pass
 
-    def update_tags():
+    def update_tags(self, msg, tags, mode):
+        wrapper = msg.get_wrapper()
         # 1. update the tags in the message wrapper --- stored where???
         # 2. call adaptor.update_msg(store)
         pass
@@ -148,7 +206,7 @@ class Account(object):
         self.store = store
         self.adaptor = self.adaptor_class()
 
-        self.__mailboxes = set([])
+        self.__mailboxes = set([])  # XXX needed?
         self._initialized = False
         self._deferred_initialization = defer.Deferred()
 
@@ -185,6 +243,8 @@ class Account(object):
             self._deferred_initialization.addCallback(cb)
             return self._deferred_initialization
 
+    # XXX needed ? ------------------------------------------
+
     @property
     def mailboxes(self):
         """
@@ -202,25 +262,33 @@ class Account(object):
         d.addCallback(update_mailboxes)
         return d
 
+    # XXX needed ? ------------------------------------------
+
     #
     # Public API Starts
     #
 
-    # XXX params for IMAP only???
-    def list_mailboxes(self, ref, wildcard):
-        self.adaptor.get_all_mboxes(self.store)
+    # TODO separate into get_all_mboxes and get_all_names ?
+    def list_mailboxes(self):
+        d = self.adaptor.get_all_mboxes(self.store)
+        return d
 
-    def add_mailbox(self, name, mbox=None):
-        pass
-
-    def create_mailbox(self, pathspec):
-        pass
+    def add_mailbox(self, name):
+        d = self.adaptor.__class__.get_or_create(name)
+        return d
 
     def delete_mailbox(self, name):
-        pass
+        d = self.adaptor.delete_mbox(self.store)
+        return d
 
     def rename_mailbox(self, oldname, newname):
-        pass
+        def _rename_mbox(wrapper):
+            wrapper.mbox = newname
+            return wrapper.update()
+
+        d = self.adaptor.__class__.get_or_create(oldname)
+        d.addCallback(_rename_mbox)
+        return d
 
     # FIXME yet to be decided if it belongs here...
 
@@ -230,6 +298,11 @@ class Account(object):
         """
         # imap select will use this, passing the collection to SoledadMailbox
         # XXX pass adaptor to MessageCollection
+        # XXX keep a reference to the collection?
+        # Will we need to "close" a collection? (ie, delete the object from
+        # memory)
+        # 1. get mailbox document
+        # 2. get collection of pointers? how much memory footprint is that?
         pass
 
     def get_collection_by_docs(self, docs):
@@ -237,6 +310,7 @@ class Account(object):
         :rtype: MessageCollection
         """
         # get a collection of docs by a list of doc_id
+        # XXX where is this doc_id set coming from?
         # XXX pass adaptor to MessageCollection
         pass
 
@@ -244,5 +318,4 @@ class Account(object):
         """
         :rtype: MessageCollection
         """
-        # is this a good idea?
-        pass
+        raise NotImplementedError()

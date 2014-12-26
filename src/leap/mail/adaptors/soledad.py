@@ -636,6 +636,9 @@ class SoledadMailAdaptor(SoledadIndexMixin):
         """
         return mbox_wrapper.update(store)
 
+    def delete_mbox(self, store, mbox_wrapper):
+        return mbox_wrapper.delete(store)
+
     def get_all_mboxes(self, store):
         """
         Retrieve a list with wrappers for all the mailboxes.
