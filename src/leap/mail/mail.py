@@ -124,13 +124,17 @@ class MessageCollection(object):
 
     # Get message
 
-    def get_message_by_doc_id(self, doc_id):
+    def get_message_from_chash(self, mailbox, chash):
+        pass
+
+    def get_message_by_meta_doc_id(self, doc_id):
         # XXX get from adaptor method
         # --- get by UID (mailbox)
         # --- get by
         return self.adaptor.from_docs(self.messageklass, self.store)
 
     def get_message_by_mailbox_uid(self, uid, cdocs=False):
+        # XXX accept range too?
         # XXX get from local table
         # XXX get fdoc, hdoc...
         # If cdocs, get cdocs also into wrapper
@@ -224,13 +228,17 @@ class Account(object):
             self._initialized = True
             self._deferred_initialization.callback(None)
 
-        def load_mbox_cache(result):
-            d = self._load_mailboxes()
-            d.addCallback(lambda _: result)
-            return d
+        #XXX initialize the MailboxUID class here,
+        # as a callback...
+
+        #def load_mbox_cache(result):
+            #d = self._load_mailboxes()
+            #d.addCallback(lambda _: result)
+            #return d
 
         d = self.adaptor.initialize_store(self.store)
-        d.addCallback(load_mbox_cache)
+        #d.addCallback(load_mbox_cache)
+        # XXX call to list_mailboxes instead
         d.addCallback(add_mailbox_if_none)
         d.addCallback(finish_initialization)
 
@@ -245,22 +253,22 @@ class Account(object):
 
     # XXX needed ? ------------------------------------------
 
-    @property
-    def mailboxes(self):
-        """
-        A list of the current mailboxes for this account.
-        :rtype: set
-        """
-        return sorted(self.__mailboxes)
+    #@property
+    #def mailboxes(self):
+        #"""
+        #A list of the current mailboxes for this account.
+        #:rtype: set
+        #"""
+        #return sorted(self.__mailboxes)
+#
+    #def _load_mailboxes(self):
 
-    def _load_mailboxes(self):
-
-        def update_mailboxes(mbox_names):
-            self.__mailboxes.update(mbox_names)
-
-        d = self.adaptor.get_all_mboxes(self.store)
-        d.addCallback(update_mailboxes)
-        return d
+        #def update_mailboxes(mbox_names):
+            #self.__mailboxes.update(mbox_names)
+#
+        #d = self.adaptor.get_all_mboxes(self.store)
+        #d.addCallback(update_mailboxes)
+        #return d
 
     # XXX needed ? ------------------------------------------
 

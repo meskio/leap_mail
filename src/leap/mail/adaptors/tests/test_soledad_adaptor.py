@@ -18,20 +18,16 @@
 Tests for the Soledad Adaptor module - leap.mail.adaptors.soledad
 """
 import os
-import shutil
-import tempfile
-
 from functools import partial
 
 from twisted.internet import defer
 from twisted.trial import unittest
 
-from leap.common.testing.basetest import BaseLeapTest
 from leap.mail.adaptors import models
 from leap.mail.adaptors.soledad import SoledadDocumentWrapper
 from leap.mail.adaptors.soledad import SoledadIndexMixin
 from leap.mail.adaptors.soledad import SoledadMailAdaptor
-from leap.soledad.client import Soledad
+from leap.mail.tests.common import SoledadTestMixin
 
 TEST_USER = "testuser@leap.se"
 TEST_PASSWD = "1234"
@@ -39,83 +35,6 @@ TEST_PASSWD = "1234"
 # DEBUG
 # import logging
 # logging.basicConfig(level=logging.DEBUG)
-
-
-def initialize_soledad(email, gnupg_home, tempdir):
-    """
-    Initializes soledad by hand
-
-    :param email: ID for the user
-    :param gnupg_home: path to home used by gnupg
-    :param tempdir: path to temporal dir
-    :rtype: Soledad instance
-    """
-
-    uuid = "foobar-uuid"
-    passphrase = u"verysecretpassphrase"
-    secret_path = os.path.join(tempdir, "secret.gpg")
-    local_db_path = os.path.join(tempdir, "soledad.u1db")
-    server_url = "https://provider"
-    cert_file = ""
-
-    soledad = Soledad(
-        uuid,
-        passphrase,
-        secret_path,
-        local_db_path,
-        server_url,
-        cert_file,
-        syncable=False)
-
-    return soledad
-
-
-# TODO move to common module
-# XXX remove duplication
-class SoledadTestMixin(BaseLeapTest):
-    """
-    It is **VERY** important that this base is added *AFTER* unittest.TestCase
-    """
-
-    def setUp(self):
-        self.results = []
-
-        self.old_path = os.environ['PATH']
-        self.old_home = os.environ['HOME']
-        self.tempdir = tempfile.mkdtemp(prefix="leap_tests-")
-        self.home = self.tempdir
-        bin_tdir = os.path.join(
-            self.tempdir,
-            'bin')
-        os.environ["PATH"] = bin_tdir
-        os.environ["HOME"] = self.tempdir
-
-        # Soledad: config info
-        self.gnupg_home = "%s/gnupg" % self.tempdir
-        self.email = 'leap@leap.se'
-
-        # initialize soledad by hand so we can control keys
-        self._soledad = initialize_soledad(
-            self.email,
-            self.gnupg_home,
-            self.tempdir)
-
-    def tearDown(self):
-        """
-        tearDown method called after each test.
-        """
-        self.results = []
-        try:
-            self._soledad.close()
-        except Exception as exc:
-            print "ERROR WHILE CLOSING SOLEDAD"
-            # logging.exception(exc)
-        finally:
-            os.environ["PATH"] = self.old_path
-            os.environ["HOME"] = self.old_home
-            # safety check
-            assert 'leap_tests-' in self.tempdir
-            shutil.rmtree(self.tempdir)
 
 
 class CounterWrapper(SoledadDocumentWrapper):
