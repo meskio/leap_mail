@@ -14,321 +14,22 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
-MessagePart implementation. Used from LeapMessage.
+MessagePart implementation. Used from IMAPMessage.
 """
 import logging
 import StringIO
-import weakref
 
-from collections import namedtuple
-
-from enum import Enum
 from zope.interface import implements
 from twisted.mail import imap4
 
 from leap.common.decorators import memoized_method
 from leap.common.mail import get_email_charset
-from leap.mail.imap import interfaces
-from leap.mail.imap.fields import fields
-from leap.mail.utils import empty, first, find_charset
-
-MessagePartType = Enum("hdoc", "fdoc", "cdoc", "cdocs", "docs_id")
-
+from leap.mail.utils import empty, find_charset
 
 logger = logging.getLogger(__name__)
 
 
-"""
-A MessagePartDoc is a light wrapper around the dictionary-like
-data that we pass along for message parts. It can be used almost everywhere
-that you would expect a SoledadDocument, since it has a dict under the
-`content` attribute.
-
-We also keep some metadata on it, relative in part to the message as a whole,
-and sometimes to a part in particular only.
-
-* `new` indicates that the document has just been created. SoledadStore
-  should just create a new doc for all the related message parts.
-* `store` indicates the type of store a given MessagePartDoc lives in.
-  We currently use this to indicate that  the document comes from memeory,
-  but we should probably get rid of it as soon as we extend the use of the
-  SoledadStore interface along LeapMessage, MessageCollection and Mailbox.
-* `part` is one of the MessagePartType enums.
-
-* `dirty` indicates that, while we already have the document in Soledad,
-  we have modified its state in memory, so we need to put_doc instead while
-  dumping the MemoryStore contents.
-  `dirty` attribute would only apply to flags-docs and linkage-docs.
-* `doc_id` is the identifier for the document in the u1db database, if any.
-
-"""
-
-MessagePartDoc = namedtuple(
-    'MessagePartDoc',
-    ['new', 'dirty', 'part', 'store', 'content', 'doc_id'])
-
-"""
-A RecentFlagsDoc is used to send the recent-flags document payload to the
-SoledadWriter during dumps.
-"""
-RecentFlagsDoc = namedtuple(
-    'RecentFlagsDoc',
-    ['content', 'doc_id'])
-
-
-class ReferenciableDict(dict):
-    """
-    A dict that can be weak-referenced.
-
-    Some builtin objects are not weak-referenciable unless
-    subclassed. So we do.
-
-    Used to return pointers to the items in the MemoryStore.
-    """
-
-
-class MessageWrapper(object):
-    """
-    A simple nested dictionary container around the different message subparts.
-    """
-    implements(interfaces.IMessageContainer)
-
-    FDOC = "fdoc"
-    HDOC = "hdoc"
-    CDOCS = "cdocs"
-    DOCS_ID = "docs_id"
-
-    # Using slots to limit some the memory use,
-    # Add your attribute here.
-
-    __slots__ = ["_dict", "_new", "_dirty", "_storetype", "memstore"]
-
-    def __init__(self, fdoc=None, hdoc=None, cdocs=None,
-                 from_dict=None, memstore=None,
-                 new=True, dirty=False, docs_id={}):
-        """
-        Initialize a MessageWrapper.
-        """
-        # TODO add optional reference to original message in the incoming
-        self._dict = {}
-        self.memstore = memstore
-
-        self._new = new
-        self._dirty = dirty
-
-        self._storetype = "mem"
-
-        if from_dict is not None:
-            self.from_dict(from_dict)
-        else:
-            if fdoc is not None:
-                self._dict[self.FDOC] = ReferenciableDict(fdoc)
-            if hdoc is not None:
-                self._dict[self.HDOC] = ReferenciableDict(hdoc)
-            if cdocs is not None:
-                self._dict[self.CDOCS] = ReferenciableDict(cdocs)
-
-        # This will keep references to the doc_ids to be able to put
-        # messages to soledad. It will be populated during the walk() to avoid
-        # the overhead of reading from the db.
-
-        # XXX it really *only* make sense for the FDOC, the other parts
-        # should not be "dirty", just new...!!!
-        self._dict[self.DOCS_ID] = docs_id
-
-    # properties
-
-    # TODO Could refactor new and dirty properties together.
-
-    def _get_new(self):
-        """
-        Get the value for the `new` flag.
-
-        :rtype: bool
-        """
-        return self._new
-
-    def _set_new(self, value=False):
-        """
-        Set the value for the `new` flag, and propagate it
-        to the memory store if any.
-
-        :param value: the value to set
-        :type value: bool
-        """
-        self._new = value
-        if self.memstore:
-            mbox = self.fdoc.content.get('mbox', None)
-            uid = self.fdoc.content.get('uid', None)
-            if not mbox or not uid:
-                logger.warning("Malformed fdoc")
-                return
-            key = mbox, uid
-            fun = [self.memstore.unset_new_queued,
-                   self.memstore.set_new_queued][int(value)]
-            fun(key)
-        else:
-            logger.warning("Could not find a memstore referenced from this "
-                           "MessageWrapper. The value for new will not be "
-                           "propagated")
-
-    new = property(_get_new, _set_new,
-                   doc="The `new` flag for this MessageWrapper")
-
-    def _get_dirty(self):
-        """
-        Get the value for the `dirty` flag.
-
-        :rtype: bool
-        """
-        return self._dirty
-
-    def _set_dirty(self, value=True):
-        """
-        Set the value for the `dirty` flag, and propagate it
-        to the memory store if any.
-
-        :param value: the value to set
-        :type value: bool
-        """
-        self._dirty = value
-        if self.memstore:
-            mbox = self.fdoc.content.get('mbox', None)
-            uid = self.fdoc.content.get('uid', None)
-            if not mbox or not uid:
-                logger.warning("Malformed fdoc")
-                return
-            key = mbox, uid
-            fun = [self.memstore.unset_dirty_queued,
-                   self.memstore.set_dirty_queued][int(value)]
-            fun(key)
-        else:
-            logger.warning("Could not find a memstore referenced from this "
-                           "MessageWrapper. The value for new will not be "
-                           "propagated")
-
-    dirty = property(_get_dirty, _set_dirty)
-
-    # IMessageContainer
-
-    @property
-    def fdoc(self):
-        """
-        Return a MessagePartDoc wrapping around a weak reference to
-        the flags-document in this MemoryStore, if any.
-
-        :rtype: MessagePartDoc
-        """
-        _fdoc = self._dict.get(self.FDOC, None)
-        if _fdoc:
-            content_ref = weakref.proxy(_fdoc)
-        else:
-            logger.warning("NO FDOC!!!")
-            content_ref = {}
-
-        return MessagePartDoc(new=self.new, dirty=self.dirty,
-                              store=self._storetype,
-                              part=MessagePartType.fdoc,
-                              content=content_ref,
-                              doc_id=self._dict[self.DOCS_ID].get(
-                                  self.FDOC, None))
-
-    @property
-    def hdoc(self):
-        """
-        Return a MessagePartDoc wrapping around a weak reference to
-        the headers-document in this MemoryStore, if any.
-
-        :rtype: MessagePartDoc
-        """
-        _hdoc = self._dict.get(self.HDOC, None)
-        if _hdoc:
-            content_ref = weakref.proxy(_hdoc)
-        else:
-            content_ref = {}
-        return MessagePartDoc(new=self.new, dirty=self.dirty,
-                              store=self._storetype,
-                              part=MessagePartType.hdoc,
-                              content=content_ref,
-                              doc_id=self._dict[self.DOCS_ID].get(
-                                  self.HDOC, None))
-
-    @property
-    def cdocs(self):
-        """
-        Return a weak reference to a zero-indexed dict containing
-        the content-documents, or an empty dict if none found.
-        If you want access to the MessagePartDoc for the individual
-        parts, use the generator returned by `walk` instead.
-
-        :rtype: dict
-        """
-        _cdocs = self._dict.get(self.CDOCS, None)
-        if _cdocs:
-            return weakref.proxy(_cdocs)
-        else:
-            return {}
-
-    def walk(self):
-        """
-        Generator that iterates through all the parts, returning
-        MessagePartDoc. Used for writing to SoledadStore.
-
-        :rtype: generator
-        """
-        if self._dirty:
-            try:
-                mbox = self.fdoc.content[fields.MBOX_KEY]
-                uid = self.fdoc.content[fields.UID_KEY]
-                docid_dict = self._dict[self.DOCS_ID]
-                docid_dict[self.FDOC] = self.memstore.get_docid_for_fdoc(
-                    mbox, uid)
-            except Exception as exc:
-                logger.debug("Error while walking message...")
-                logger.exception(exc)
-
-        if not empty(self.fdoc.content) and 'uid' in self.fdoc.content:
-            yield self.fdoc
-        if not empty(self.hdoc.content):
-            yield self.hdoc
-        for cdoc in self.cdocs.values():
-            if not empty(cdoc):
-                content_ref = weakref.proxy(cdoc)
-                yield MessagePartDoc(new=self.new, dirty=self.dirty,
-                                     store=self._storetype,
-                                     part=MessagePartType.cdoc,
-                                     content=content_ref,
-                                     doc_id=None)
-
-    # i/o
-
-    def as_dict(self):
-        """
-        Return a dict representation of the parts contained.
-
-        :rtype: dict
-        """
-        return self._dict
-
-    def from_dict(self, msg_dict):
-        """
-        Populate MessageWrapper parts from a dictionary.
-        It expects the same format that we use in a
-        MessageWrapper.
-
-
-        :param msg_dict: a dictionary containing the parts to populate
-                         the MessageWrapper from
-        :type msg_dict: dict
-        """
-        fdoc, hdoc, cdocs = map(
-            lambda part: msg_dict.get(part, None),
-            [self.FDOC, self.HDOC, self.CDOCS])
-
-        for t, doc in ((self.FDOC, fdoc), (self.HDOC, hdoc),
-                       (self.CDOCS, cdocs)):
-            self._dict[t] = ReferenciableDict(doc) if doc else None
-
+# TODO -- use messagewrapper
 
 class MessagePart(object):
     """
@@ -363,7 +64,6 @@ class MessagePart(object):
         # docs until we solve that. The ideal would be
         # to gather the results of the deferred operations
         # to signal the operation is complete.
-        #leap_assert(part_map, "part map dict cannot be null")
 
         self._soledad = soledad
         self._pmap = part_map
@@ -453,19 +153,8 @@ class MessagePart(object):
         :type phash: str or unicode
         :rtype: str or unicode or None
         """
-        cdocs = self._soledad.get_from_index(
-            fields.TYPE_P_HASH_IDX,
-            fields.TYPE_CONTENT_VAL, str(phash))
-
-        cdoc = first(cdocs)
-        if cdoc is None:
-            logger.warning(
-                "Could not find the content doc "
-                "for phash %s" % (phash,))
-            payload = ""
-        else:
-            payload = cdoc.content.get(fields.RAW_KEY, "")
-        return payload
+        # XXX use adaptor
+        return NotImplementedError()
 
     # TODO should memory-bound this memoize!!!
     @memoized_method
@@ -477,17 +166,8 @@ class MessagePart(object):
         :type phash: str or unicode
         :rtype: str or unicode
         """
-        cdocs = self._soledad.get_from_index(
-            fields.TYPE_P_HASH_IDX,
-            fields.TYPE_CONTENT_VAL, str(phash))
-
-        cdoc = first(cdocs)
-        if not cdoc:
-            logger.warning(
-                "Could not find the content doc "
-                "for phash %s" % (phash,))
-        ctype = cdoc.content.get('ctype', "")
-        return ctype
+        # XXX use adaptor
+        return NotImplementedError()
 
     @memoized_method
     def _get_charset(self, stuff):
