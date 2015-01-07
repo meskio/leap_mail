@@ -172,7 +172,7 @@ class Message(object):
         :return: An RFC822-formatted date string.
         :rtype: str
         """
-        return self._wrapper.fdoc.date
+        return self._wrapper.hdoc.date
 
     # imap.IMessageParts
 
@@ -271,9 +271,10 @@ class MessageCollection(object):
     store = None
     messageklass = Message
 
-    def __init__(self, adaptor, store, mbox_indexer=None, mbox_wrapper=None):
+    def __init__(self, adaptor, store, mbox_indexer=None, mbox_wrapper=None,
+                 count=None):
         """
-        Constructore for a MessageCollection.
+        Constructor for a MessageCollection.
         """
         self.adaptor = adaptor
         self.store = store
@@ -317,7 +318,7 @@ class MessageCollection(object):
         wrapper = getattr(self, "mbox_wrapper", None)
         if not wrapper:
             return None
-        return wrapper.mbox_uuid
+        return wrapper.uuid
 
     def get_mbox_attr(self, attr):
         return getattr(self.mbox_wrapper, attr)
@@ -364,8 +365,15 @@ class MessageCollection(object):
                 self.messageklass, self.store,
                 doc_id, uid=uid, get_cdocs=get_cdocs)
 
-        d = self.mbox_indexer.get_doc_id_from_uid(self.mbox_name, uid)
+        d = self.mbox_indexer.get_doc_id_from_uid(self.mbox_uuid, uid)
         d.addCallback(get_msg_from_mdoc_id)
+        return d
+
+    def _prime_count(self):
+        def update_count(count):
+            self._count = count
+        d = self.mbox_indexer.count(self.mbox_name)
+        d.addCallback(update_count)
         return d
 
     def count(self):
@@ -374,9 +382,21 @@ class MessageCollection(object):
         :return: a Deferred that will fire with the integer for the count.
         :rtype: Deferred
         """
+        # FIXME --- if IMAP server expects a count, modify it to get
+        # a deferred.
         if not self.is_mailbox_collection():
             raise NotImplementedError()
-        return self.mbox_indexer.count(self.mbox_name)
+
+        d = self.mbox_indexer.count(self.mbox_uuid)
+        return d
+
+    def count_recent(self):
+        # FIXME HACK
+        return 0
+
+    def count_unseen(self):
+        # FIXME hack
+        return 0
 
     def get_uid_next(self):
         """
@@ -385,7 +405,13 @@ class MessageCollection(object):
         :return: a Deferred that will fire with the integer for the next uid.
         :rtype: Deferred
         """
-        return self.mbox_indexer.get_next_uid(self.mbox_name)
+        return self.mbox_indexer.get_next_uid(self.mbox_uuid)
+
+    def all_uid_iter(self):
+        """
+        Iterator through all the uids for this collection.
+        """
+        return self.mbox_indexer.all_uid_iter(self.mbox_uuid)
 
     # Manipulate messages
 
@@ -420,6 +446,8 @@ class MessageCollection(object):
 
         d = wrapper.create(self.store)
         d.addCallback(insert_mdoc_id, wrapper)
+        d.addErrback(lambda f: f.printTraceback())
+
         return d
 
     def copy_msg(self, msg, newmailbox):
@@ -454,6 +482,19 @@ class MessageCollection(object):
         return d
 
     # TODO should add a delete-by-uid to collection?
+
+    def delete_all_docs(self):
+        def del_all_uid(uid_list):
+            deferreds = []
+            for uid in uid_list:
+                d = self.get_message_by_uid(uid)
+                d.addCallback(lambda msg: msg.delete())
+                deferreds.append(d)
+            return defer.gatherResults(deferreds)
+
+        d = self.all_uid_iter()
+        d.addCallback(del_all_uid)
+        return d
 
     def _update_flags_or_tags(self, old, new, mode):
         if mode == Flagsmode.APPEND:
@@ -509,15 +550,16 @@ class Account(object):
     adaptor_class = SoledadMailAdaptor
     store = None
 
-    def __init__(self, store):
+    def __init__(self, store, ready_cb=None):
         self.store = store
         self.adaptor = self.adaptor_class()
         self.mbox_indexer = MailboxIndexer(self.store)
 
+        self.deferred_initialization = defer.Deferred()
         self._initialized = False
-        self._deferred_initialization = defer.Deferred()
+        self._ready_cb = ready_cb
 
-        self._initialize_storage()
+        self._init_d = self._initialize_storage()
 
     def _initialize_storage(self):
 
@@ -527,27 +569,30 @@ class Account(object):
 
         def finish_initialization(result):
             self._initialized = True
-            self._deferred_initialization.callback(None)
+            self.deferred_initialization.callback(None)
+            if self._ready_cb is not None:
+                self._ready_cb()
 
         d = self.adaptor.initialize_store(self.store)
         d.addCallback(lambda _: self.list_all_mailbox_names())
         d.addCallback(add_mailbox_if_none)
         d.addCallback(finish_initialization)
+        return d
 
     def callWhenReady(self, cb, *args, **kw):
-        # use adaptor.store_ready instead?
         if self._initialized:
             cb(self, *args, **kw)
             return defer.succeed(None)
         else:
-            self._deferred_initialization.addCallback(cb, *args, **kw)
-            return self._deferred_initialization
+            self.deferred_initialization.addCallback(cb, *args, **kw)
+            return self.deferred_initialization
 
     #
     # Public API Starts
     #
 
     def list_all_mailbox_names(self):
+
         def filter_names(mboxes):
             return [m.mbox for m in mboxes]
 
@@ -563,8 +608,11 @@ class Account(object):
 
         def create_uuid(wrapper):
             if not wrapper.uuid:
-                wrapper.uuid = uuid.uuid4()
-                return wrapper.update(self.store)
+                wrapper.uuid = str(uuid.uuid4())
+                d = wrapper.update(self.store)
+                d.addCallback(lambda _: wrapper)
+                return d
+            return wrapper
 
         def create_uid_table_cb(wrapper):
             d = self.mbox_indexer.create_table(wrapper.uuid)
@@ -599,7 +647,7 @@ class Account(object):
 
         def _rename_mbox(wrapper):
             wrapper.mbox = newname
-            return wrapper.update(self.store)
+            return wrapper, wrapper.update(self.store)
 
         d = self.adaptor.get_or_create_mbox(self.store, oldname)
         d.addCallback(_rename_mbox)
@@ -616,8 +664,6 @@ class Account(object):
             return MessageCollection(
                 self.adaptor, self.store, self.mbox_indexer, mbox_wrapper)
 
-        mboxwrapper_klass = self.adaptor.mboxwrapper_klass
-        #d = mboxwrapper_klass.get_or_create(name)
         d = self.adaptor.get_or_create_mbox(self.store, name)
         d.addCallback(get_collection_for_mailbox)
         return d
