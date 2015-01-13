@@ -43,6 +43,13 @@ def sanitize(mailbox_id):
 
 
 def check_good_uuid(mailbox_id):
+    """
+    Check that the passed mailbox identifier is a valid UUID.
+    :param mailbox_id: the uuid to check
+    :type mailbox_id: str
+    :return: None
+    :raises: AssertionError if a wrong uuid was passed.
+    """
     try:
         uuid.UUID(str(mailbox_id))
     except (AttributeError, ValueError):
