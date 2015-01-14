@@ -149,8 +149,11 @@ class LEAPIMAPServer(imap4.IMAP4Server):
 
     def _cbSelectWork(self, mbox, cmdName, tag):
         """
-        Callback for selectWork, patched to avoid conformance errors due to
-        incomplete UIDVALIDITY line.
+        Callback for selectWork
+
+        * patched to avoid conformance errors due to incomplete UIDVALIDITY
+        line.
+        * patched to accept deferreds for messagecount and recent count
         """
         if mbox is None:
             self.sendNegativeResponse(tag, 'No such mailbox')

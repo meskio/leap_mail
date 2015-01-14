@@ -39,7 +39,6 @@ from twisted import cred
 
 from leap.mail.imap.mailbox import IMAPMailbox
 from leap.mail.imap.messages import IMAPMessageCollection
-from leap.mail.imap.server import LEAPIMAPServer
 from leap.mail.imap.tests.utils import IMAP4HelperMixin
 
 
@@ -1142,6 +1141,8 @@ class LEAPIMAP4ServerTestCase(IMAP4HelperMixin):
         return d1
 
     def _cbTestClose(self, count):
+        # TODO is this correct? count should not take into account those
+        # flagged as deleted???
         self.assertEqual(count, 1)
         # TODO --- assert flags are those of the message #2
         self.failUnless(self.mailbox.closed)
@@ -1151,31 +1152,32 @@ class LEAPIMAP4ServerTestCase(IMAP4HelperMixin):
         Test expunge command
         """
         acc = self.server.theAccount
-        name = 'mailbox-expunge'
+        mailbox_name = 'mailbox-expunge'
 
-        d0 = lambda: acc.addMailbox(name)
+        def add_mailbox():
+            return acc.addMailbox(mailbox_name)
 
         def login():
             return self.client.login(TEST_USER, TEST_PASSWD)
 
         def select():
-            return self.client.select('mailbox-expunge')
+            return self.client.select(mailbox_name)
 
         def get_mailbox():
-            self.mailbox = LEAPIMAPServer.theAccount.getMailbox(name)
+            def save_mailbox(mailbox):
+                self.mailbox = mailbox
+            d = acc.getMailbox(mailbox_name)
+            d.addCallback(save_mailbox)
+            return d
 
         def add_messages():
-            d1 = self.mailbox.messages.add_msg(
-                'test 1', subject="Message 1",
-                flags=('\\Deleted', 'AnotherFlag'))
-            d2 = self.mailbox.messages.add_msg(
-                'test 2', subject="Message 2",
-                flags=('AnotherFlag',))
-            d3 = self.mailbox.messages.add_msg(
-                'test 3', subject="Message 3",
-                flags=('\\Deleted',))
-            d = defer.gatherResults([d1, d2, d3])
-            return d
+            d1 = self.mailbox.addMessage(
+                'test 1', flags=('\\Deleted', 'AnotherFlag'))
+            d2 = self.mailbox.addMessage(
+                'test 2', flags=('AnotherFlag',))
+            d3 = self.mailbox.addMessage(
+                'test 3', flags=('\\Deleted',))
+            return defer.gatherResults([d1, d2, d3], consumeErrors=True)
 
         def expunge():
             return self.client.expunge()
@@ -1185,8 +1187,8 @@ class LEAPIMAP4ServerTestCase(IMAP4HelperMixin):
             self.results = results
 
         self.results = None
-        d1 = self.connected.addCallback(strip(login))
-        d1.addCallback(strip(d0))
+        d1 = self.connected.addCallback(strip(add_mailbox))
+        d1.addCallback(strip(login))
         d1.addCallbacks(strip(select), self._ebGeneral)
         d1.addCallback(strip(get_mailbox))
         d1.addCallbacks(strip(add_messages), self._ebGeneral)
@@ -1195,14 +1197,16 @@ class LEAPIMAP4ServerTestCase(IMAP4HelperMixin):
         d1.addCallbacks(self._cbStopClient, self._ebGeneral)
         d2 = self.loopback()
         d = defer.gatherResults([d1, d2])
+        d.addCallback(lambda _: self.mailbox.getMessageCount())
         return d.addCallback(self._cbTestExpunge)
 
-    def _cbTestExpunge(self, ignored):
+    def _cbTestExpunge(self, count):
         # we only left 1 mssage with no deleted flag
-        self.assertEqual(len(self.mailbox.messages), 1)
+        self.assertEqual(count, 1)
+
+        # TODO --- convert this into deferreds
         msg = self.mailbox.messages.get_msg_by_uid(2)
 
-        msg = list(self.mailbox.messages)[0]
         self.assertTrue(msg is not None)
 
         self.assertEqual(

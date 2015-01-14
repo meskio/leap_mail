@@ -21,9 +21,11 @@ import re
 import logging
 import StringIO
 import cStringIO
+import time
 import os
 
 from collections import defaultdict
+from email.utils import formatdate
 
 from twisted.internet import defer
 from twisted.internet import reactor
@@ -115,6 +117,7 @@ class IMAPMailbox(object):
         :type rw: int
         """
         self.rw = rw
+        self.closed = False
 
         self._uidvalidity = None
         self.collection = collection
@@ -353,10 +356,14 @@ class IMAPMailbox(object):
 
         # XXX we could treat the message as an IMessage from here
         leap_assert_type(message, basestring)
+
         if flags is None:
             flags = tuple()
         else:
             flags = tuple(str(flag) for flag in flags)
+
+        if date is None:
+            date = formatdate(time.time())
 
         # if PROFILE_CMD:
         # do_profile_cmd(d, "APPEND")
@@ -458,10 +465,9 @@ class IMAPMailbox(object):
         """
         if not self.isWriteable():
             raise imap4.ReadOnlyMailbox
-        d = defer.Deferred()
-        # FIXME actually broken.
+        # TODO broken!!!.
         # Iterate through index, and do a expunge.
-        return d
+        return self.collection.delete_all_flagged()
 
     # FIXME -- get last_uid from mbox_indexer
     def _bound_seq(self, messages_asked):
@@ -478,6 +484,7 @@ class IMAPMailbox(object):
             except TypeError:
                 # looks like we cannot iterate
                 try:
+                    # XXX fixme, does not exist
                     messages_asked.last = self.last_uid
                 except ValueError:
                     pass
@@ -788,6 +795,7 @@ class IMAPMailbox(object):
         # :raise IllegalQueryError: Raised when query is not valid.
         # example query:
         #  ['UNDELETED', 'HEADER', 'Message-ID',
+        # XXX fixme, does not exist
         #   '52D44F11.9060107@dev.bitmask.net']
 
         # TODO hardcoding for now! -- we'll support generic queries later on

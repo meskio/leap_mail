@@ -369,6 +369,7 @@ class MessageCollection(object):
         d.addCallback(get_msg_from_mdoc_id)
         return d
 
+    # TODO deprecate ??? ---
     def _prime_count(self):
         def update_count(count):
             self._count = count
@@ -382,8 +383,6 @@ class MessageCollection(object):
         :return: a Deferred that will fire with the integer for the count.
         :rtype: Deferred
         """
-        # FIXME --- if IMAP server expects a count, modify it to get
-        # a deferred.
         if not self.is_mailbox_collection():
             raise NotImplementedError()
 
@@ -423,6 +422,7 @@ class MessageCollection(object):
             flags = tuple()
         if not tags:
             tags = tuple()
+
         leap_assert_type(flags, tuple)
         leap_assert_type(date, str)
 
@@ -480,6 +480,16 @@ class MessageCollection(object):
         d = wrapper.delete(self.store)
         d.addCallback(delete_mdoc_id, wrapper)
         return d
+
+    def delete_all_flagged(self):
+        """
+        Delete all messages flagged as \\Deleted.
+        Used from IMAPMailbox.expunge()
+        """
+        # TODO iterate through all the flagged deleted
+        # (use adaptor for that)
+        # and return a deferredList with all deletions...
+        raise NotImplementedError()
 
     # TODO should add a delete-by-uid to collection?
 
