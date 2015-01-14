@@ -575,7 +575,7 @@ class Account(object):
 
         def add_mailbox_if_none(mboxes):
             if not mboxes:
-                self.add_mailbox(INBOX_NAME)
+                return self.add_mailbox(INBOX_NAME)
 
         def finish_initialization(result):
             self._initialized = True
