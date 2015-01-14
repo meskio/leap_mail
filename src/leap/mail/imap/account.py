@@ -72,6 +72,10 @@ class IMAPAccount(object):
 
         :param store: a Soledad instance.
         :type store: Soledad
+
+        :param d: a deferred that will be fired with this IMAPAccount instance
+                  when the account is ready to be used.
+        :type d: defer.Deferred
         """
         leap_assert(store, "Need a store instance to initialize")
         leap_assert_type(store, Soledad)
